@@ -2,12 +2,16 @@
 name = "toonify"
 version = "1.0.0"
 edition = "2021"
-authors = ["Your Name"]
+authors = ["Andrei Drozdenko <andrei@drozdenko.dev>"]
 description = "Compress verbose browser errors for LLM consumption. Save 70-90% tokens."
 license = "MIT"
-repository = "https://github.com/adrozdenko/toonify"
+repository = "https://github.com/AdroDev/toonify"
+homepage = "https://github.com/AdroDev/toonify"
+documentation = "https://github.com/AdroDev/toonify#readme"
+readme = "README.md"
 keywords = ["cli", "errors", "llm", "tokens", "compression"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = [".github/*"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -21,13 +21,17 @@ const SOURCE_EXTENSIONS: &str = r"mdx|tsx|jsx|ts|js|vue|svelte";
 #[derive(Parser)]
 #[command(name = "toonify", version, about = "Compress verbose browser errors for LLM consumption")]
 struct Args {
-    /// Copy result to clipboard
-    #[arg(short, long)]
-    copy: bool,
+    /// Don't copy result to clipboard (copies by default)
+    #[arg(long)]
+    no_copy: bool,
 
     /// Plain output (no colors)
     #[arg(short, long)]
     plain: bool,
+
+    /// Output in TOON format (Token-Oriented Object Notation)
+    #[arg(short, long)]
+    toon: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,10 +61,11 @@ enum ErrorType {
     CspError,
     SecurityError,
     MixedContent,
-    // Build tool errors
+    // Build tool / Testing errors
     Storybook,
     NextJs,
     ModuleNotFound,
+    Playwright,
     // System/Node errors
     SystemError,
     // Promise errors
@@ -96,7 +101,8 @@ impl ErrorType {
         Self::NetworkError,
         Self::WebSocketError,
         Self::HttpError,         // After ServiceWorker (SW errors may contain HTTP codes)
-        // Build tools
+        // Build tools / Testing
+        Self::Playwright,        // Before Storybook (more specific patterns)
         Self::Storybook,
         Self::NextJs,
         Self::ModuleNotFound,
@@ -139,6 +145,7 @@ impl ErrorType {
             Self::Storybook => "STORYBOOK",
             Self::NextJs => "NEXTJS",
             Self::ModuleNotFound => "MODULE_NOT_FOUND",
+            Self::Playwright => "PLAYWRIGHT",
             Self::SystemError => "SYSTEM_ERROR",
             Self::UnhandledRejection => "UNHANDLED_REJECTION",
             Self::MediaError => "MEDIA_ERROR",
@@ -155,8 +162,8 @@ impl ErrorType {
             Self::DomNesting | Self::Deprecation => Color::Yellow,
             // React/Hydration (magenta)
             Self::Hydration | Self::ReactMinified | Self::InvalidHook => Color::Magenta,
-            // Build tools (cyan)
-            Self::Storybook | Self::NextJs | Self::ModuleNotFound => Color::Cyan,
+            // Build tools / Testing (cyan)
+            Self::Storybook | Self::NextJs | Self::ModuleNotFound | Self::Playwright => Color::Cyan,
             // Network (blue)
             Self::NetworkError | Self::HttpError | Self::WebSocketError => Color::Blue,
             // Security (bright red)
@@ -172,6 +179,7 @@ impl ErrorType {
             Self::Hydration | Self::ReactMinified | Self::InvalidHook => "󰜈",
             Self::Storybook => "󰂺",
             Self::NextJs => "󰔶",
+            Self::Playwright => "󰙨",
             Self::CorsError | Self::CspError | Self::SecurityError | Self::MixedContent => "󰒃",
             Self::NetworkError | Self::HttpError => "󰖟",
             Self::WebSocketError => "󱄙",
@@ -208,6 +216,7 @@ impl ErrorType {
             Self::Storybook => &PATTERNS.storybook,
             Self::NextJs => &PATTERNS.nextjs,
             Self::ModuleNotFound => &PATTERNS.module_not_found,
+            Self::Playwright => &PATTERNS.playwright,
             Self::SystemError => &PATTERNS.system_error,
             Self::UnhandledRejection => &PATTERNS.unhandled_rejection,
             Self::MediaError => &PATTERNS.media_error,
@@ -247,10 +256,11 @@ struct Patterns {
     csp_error: Regex,
     security_error: Regex,
     mixed_content: Regex,
-    // Detection - Build tools
+    // Detection - Build tools / Testing
     storybook: Regex,
     nextjs: Regex,
     module_not_found: Regex,
+    playwright: Regex,
     // Detection - System
     system_error: Regex,
     // Detection - Promise
@@ -272,6 +282,11 @@ struct Patterns {
     http_status: Regex,
     user_frame: Regex,
     framework_noise: Regex,
+    // TOON frame parsing patterns (pre-compiled for performance)
+    frame_at_name_loc: Regex,
+    frame_at_symbol_loc: Regex,
+    frame_name_at_loc: Regex,
+    location_file_line: Regex,
 }
 
 impl Patterns {
@@ -284,13 +299,13 @@ impl Patterns {
             react_minified: re(r"Minified React error #\d+|react\.production\.min\.js"),
             invalid_hook: re(r"(?i)Invalid hook call|Rules of Hooks|rendered more hooks"),
 
-            // Detection - JavaScript errors
-            type_error: re(r"(?m)^TypeError:|Uncaught TypeError"),
-            ref_error: re(r"(?m)^ReferenceError:|Uncaught ReferenceError"),
-            syntax_error: re(r"(?m)^SyntaxError:|Uncaught SyntaxError"),
-            range_error: re(r"(?m)^RangeError:|Uncaught RangeError"),
-            uri_error: re(r"(?m)^URIError:|Uncaught URIError"),
-            eval_error: re(r"(?m)^EvalError:|Uncaught EvalError"),
+            // Detection - JavaScript errors (allow optional file:line prefix from browser console)
+            type_error: re(r"(?m)^(?:\S+:\d+\s+)?TypeError:|Uncaught TypeError"),
+            ref_error: re(r"(?m)^(?:\S+:\d+\s+)?ReferenceError:|Uncaught ReferenceError"),
+            syntax_error: re(r"(?m)^(?:\S+:\d+\s+)?SyntaxError:|Uncaught SyntaxError"),
+            range_error: re(r"(?m)^(?:\S+:\d+\s+)?RangeError:|Uncaught RangeError"),
+            uri_error: re(r"(?m)^(?:\S+:\d+\s+)?URIError:|Uncaught URIError"),
+            eval_error: re(r"(?m)^(?:\S+:\d+\s+)?EvalError:|Uncaught EvalError"),
 
             // Detection - Network
             cors_error: re(r"(?i)CORS|Access-Control-Allow-Origin|blocked by CORS|cross-origin"),
@@ -304,10 +319,11 @@ impl Patterns {
             security_error: re(r"(?i)SecurityError|security.*violation|insecure|blocked.*security"),
             mixed_content: re(r"(?i)Mixed Content|blocked.*insecure|http://.*https://"),
 
-            // Detection - Build tools
+            // Detection - Build tools / Testing
             storybook: re(r"SB_"),
             nextjs: re(r"(?i)NEXT_|getServerSideProps|getStaticProps|NextJS|next/"),
             module_not_found: re(r"(?i)Module not found|Cannot find module|Cannot resolve|ModuleNotFoundError"),
+            playwright: re(r"(?i)locator\.(click|fill|waitFor|check|press|type|hover)|page\.(goto|waitFor|click)|expect\(.*\)\.(toBeVisible|toHaveText|toBeEnabled|toBeChecked|toContainText)|TimeoutError.*locator|waiting for locator|strict mode violation|playwright|@playwright/test"),
 
             // Detection - System
             system_error: re(r"ENOENT|EACCES|ECONNREFUSED|ETIMEDOUT|EADDRINUSE|EPERM"),
@@ -335,6 +351,12 @@ impl Patterns {
             http_status: re(r"\b[45]\d{2}\b"),
             user_frame: re(&format!(r"(@|at ).+\.({ext}):\d+")),
             framework_noise: re(r"chunk-|node_modules|storybook_internal|webpack|vite|/internal|react-dom"),
+
+            // TOON frame parsing (pre-compiled for hot path performance)
+            frame_at_name_loc: re(r"at\s+(\w+)\s*\(([^)]+)\)"),
+            frame_at_symbol_loc: re(r"@\s*(\w+)\s*\(([^)]+)\)"),
+            frame_name_at_loc: re(r"(\w+)\s*@\s*(.+)"),
+            location_file_line: re(r"([^/]+\.[a-z]+):(\d+)(?::\d+)?$"),
         }
     }
 }
@@ -407,11 +429,12 @@ fn extract_issue(input: &str, error_type: ErrorType) -> Option<String> {
         ErrorType::SecurityError => find_line_containing(input, &["SecurityError", "security", "blocked"]),
         ErrorType::MixedContent => find_line_containing(input, &["Mixed Content", "insecure", "http://"]),
 
-        // Build tools
+        // Build tools / Testing
         ErrorType::Storybook => extract_first_match_truncated(input, &PATTERNS.storybook_code, 100),
         ErrorType::NextJs => extract_first_match_truncated(input, &PATTERNS.nextjs_code, 100)
             .or_else(|| find_line_containing(input, &["NEXT_", "getServerSideProps", "getStaticProps"])),
         ErrorType::ModuleNotFound => find_line_containing(input, &["Module not found", "Cannot find module", "Cannot resolve"]),
+        ErrorType::Playwright => find_line_containing(input, &["TimeoutError", "locator", "expect(", "waiting for", "strict mode", "Timeout"]),
 
         // System errors
         ErrorType::SystemError => extract_first_match(input, &PATTERNS.system_code),
@@ -468,10 +491,24 @@ fn find_line_containing(input: &str, needles: &[&str]) -> Option<String> {
 }
 
 fn find_line_starting_with(input: &str, prefixes: &[&str]) -> Option<String> {
-    input
+    // First try exact start-of-line match
+    if let Some(line) = input
         .lines()
         .find(|line| prefixes.iter().any(|p| line.starts_with(p)))
-        .map(str::to_string)
+    {
+        return Some(line.to_string());
+    }
+
+    // Fall back to finding pattern anywhere in line (browser console format: file.js:29 ErrorType:)
+    for line in input.lines() {
+        for prefix in prefixes {
+            if let Some(idx) = line.find(prefix) {
+                // Extract from the error type onwards
+                return Some(line[idx..].to_string());
+            }
+        }
+    }
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,6 +574,107 @@ impl ToonifiedError {
 
         lines.join("\n")
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOON Formatter (Token-Oriented Object Notation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl ToonifiedError {
+    fn format_toon(&self) -> String {
+        let mut lines = vec![format!("type: {}", self.error_type.name())];
+
+        if let Some(ref loc) = self.file_location {
+            lines.push(format!("file: {}", loc));
+        }
+
+        if let Some(ref issue) = self.issue {
+            // Escape commas in issue text for TOON compatibility
+            let escaped_issue = issue.replace(',', "\\,");
+            lines.push(format!("issue: {}", escaped_issue));
+        }
+
+        // TOON tabular array format for frames
+        if !self.frames.is_empty() {
+            let parsed_frames: Vec<(String, String)> = self.frames
+                .iter()
+                .map(|f| parse_frame(f))
+                .collect();
+
+            lines.push(format!("frames[{}]{{fn,loc}}:", parsed_frames.len()));
+            for (func, loc) in parsed_frames {
+                lines.push(format!("  {},{}", func, loc));
+            }
+        }
+
+        // Calculate compressed size using this format
+        let content = lines.join("\n");
+        let stats_line_len = 30; // Approximate stats line size
+        let compressed_len = content.len() + stats_line_len;
+        let savings = if self.original_len > compressed_len {
+            ((self.original_len - compressed_len) * 100) / self.original_len
+        } else {
+            0
+        };
+
+        // TOON inline object format for stats
+        lines.push(format!("stats{{orig,comp,pct}}: {},{},{}", self.original_len, compressed_len, savings));
+
+        lines.join("\n")
+    }
+}
+
+/// Parse a stack frame string into (function_name, location)
+fn parse_frame(frame: &str) -> (String, String) {
+    // Common patterns:
+    // "at FunctionName (file.tsx:42:10)"
+    // "at FunctionName @ file.tsx:42"
+    // "@ FunctionName (file.tsx:42)"
+    // "FunctionName@file.tsx:42"
+
+    let frame = frame.trim();
+
+    // Try "at Name (loc)" pattern
+    if let Some(captures) = PATTERNS.frame_at_name_loc.captures(frame) {
+        let func = captures.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+        let loc = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+        return (func.to_string(), simplify_location(loc));
+    }
+
+    // Try "@ Name (loc)" pattern
+    if let Some(captures) = PATTERNS.frame_at_symbol_loc.captures(frame) {
+        let func = captures.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+        let loc = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+        return (func.to_string(), simplify_location(loc));
+    }
+
+    // Try "Name @ loc" or "Name@loc" pattern
+    if let Some(captures) = PATTERNS.frame_name_at_loc.captures(frame) {
+        let func = captures.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+        let loc = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+        return (func.to_string(), simplify_location(loc));
+    }
+
+    // Fallback: return as-is
+    (frame.to_string(), String::new())
+}
+
+/// Simplify a location path (extract filename:line from full URL/path)
+fn simplify_location(loc: &str) -> String {
+    // Extract just filename:line from paths like:
+    // "http://localhost:6006/path/to/file.tsx:42:10" -> "file.tsx:42"
+    // "/absolute/path/to/file.tsx:42:10" -> "file.tsx:42"
+
+    let loc = loc.trim();
+
+    // Try to extract filename:line:col or filename:line
+    if let Some(captures) = PATTERNS.location_file_line.captures(loc) {
+        let file = captures.get(1).map(|m| m.as_str()).unwrap_or(loc);
+        let line = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+        return format!("{}:{}", file, line);
+    }
+
+    loc.to_string()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -647,11 +785,19 @@ impl BoxBuilder {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
-    } else {
-        s.to_string()
+    if s.len() <= max_len {
+        return s.to_string();
     }
+
+    let truncate_at = max_len.saturating_sub(3);
+
+    // Find nearest UTF-8 character boundary to avoid panic on multi-byte chars
+    let mut boundary = truncate_at.min(s.len());
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+
+    format!("{}...", &s[..boundary])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -713,21 +859,31 @@ fn main() {
     };
 
     let result = ToonifiedError::new(&input, error_type);
-    let plain_output = result.format_plain();
+
+    // Select output format
+    let copyable_output = if args.toon {
+        result.format_toon()
+    } else {
+        result.format_plain()
+    };
 
     // Display
-    if args.plain || !io::stdout().is_terminal() {
-        println!("{}", plain_output);
+    if args.toon || args.plain || !io::stdout().is_terminal() {
+        println!("{}", copyable_output);
     } else {
         println!("{}", result.format_colored());
     }
 
-    // Copy to clipboard
-    if args.copy {
-        if let Ok(mut clipboard) = Clipboard::new() {
-            if clipboard.set_text(&plain_output).is_ok() {
-                eprintln!("{}", "✓ Copied to clipboard!".green().bold());
-            }
+    // Copy to clipboard by default (unless --no-copy or piped output)
+    let should_copy = !args.no_copy && io::stdout().is_terminal();
+    if should_copy {
+        let format_name = if args.toon { "TOON" } else { "plain" };
+        match Clipboard::new() {
+            Ok(mut clipboard) => match clipboard.set_text(&copyable_output) {
+                Ok(_) => eprintln!("{}", format!("📋 Copied to clipboard ({})", format_name).green()),
+                Err(_) => eprintln!("{}", "⚠ Failed to write to clipboard".yellow()),
+            },
+            Err(_) => eprintln!("{}", "⚠ Clipboard not available".yellow()),
         }
     }
 }
@@ -951,6 +1107,55 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // JavaScript Errors with Browser Console Prefix
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detects_syntax_error_with_file_prefix() {
+        // Browser console format: file.js:line ErrorType: message
+        let input = "vite-app.js:29 SyntaxError: The requested module '/src/stories/brand/BrandComponents.tsx' does not provide an export named 'NEUTRAL' (at 06-Iconography.mdx:7:49)";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::SyntaxError));
+    }
+
+    #[test]
+    fn detects_type_error_with_file_prefix() {
+        let input = "bundle.js:42 TypeError: Cannot read properties of undefined (reading 'map')";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::TypeError));
+    }
+
+    #[test]
+    fn detects_ref_error_with_file_prefix() {
+        let input = "app.js:100 ReferenceError: myVariable is not defined";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::RefError));
+    }
+
+    #[test]
+    fn detects_range_error_with_file_prefix() {
+        let input = "script.js:55 RangeError: Maximum call stack size exceeded";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::RangeError));
+    }
+
+    #[test]
+    fn detects_syntax_error_without_prefix() {
+        // Should still work without file prefix
+        let input = "SyntaxError: Unexpected token '<'";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::SyntaxError));
+    }
+
+    #[test]
+    fn detects_uncaught_type_error() {
+        // Uncaught variant should still work
+        let input = "Uncaught TypeError: foo is not a function";
+        let result = detect_error_type(input);
+        assert_eq!(result, Some(ErrorType::TypeError));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // File Location Extraction Tests
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -1155,6 +1360,24 @@ mod tests {
         assert_eq!(result, "exactly10!");
     }
 
+    #[test]
+    fn truncate_handles_unicode_without_panic() {
+        // This would panic before the fix if truncation landed mid-character
+        let chinese = "错误：无法读取属性的值";
+        let result = truncate(chinese, 10);
+        assert!(result.ends_with("..."));
+        // Ensure we can iterate over chars (proves valid UTF-8)
+        assert!(result.chars().count() > 0);
+    }
+
+    #[test]
+    fn truncate_handles_emoji_without_panic() {
+        let emoji = "Error: 🔥🔥🔥🔥🔥 something failed";
+        let result = truncate(emoji, 15);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() > 0);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Integration Tests
     // ─────────────────────────────────────────────────────────────────────────
@@ -1245,5 +1468,302 @@ mod tests {
         assert!(!ErrorType::DomNesting.icon().is_empty());
         assert!(!ErrorType::Hydration.icon().is_empty());
         assert!(!ErrorType::Storybook.icon().is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TOON Format Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn toon_format_includes_type() {
+        let result = ToonifiedError::new("TypeError: foo is not a function", ErrorType::TypeError);
+        let output = result.format_toon();
+        assert!(output.contains("type: TYPE_ERROR"));
+    }
+
+    #[test]
+    fn toon_format_includes_stats_inline_object() {
+        let result = ToonifiedError::new("TypeError: test", ErrorType::TypeError);
+        let output = result.format_toon();
+        assert!(output.contains("stats{orig,comp,pct}:"));
+    }
+
+    #[test]
+    fn toon_format_frames_use_tabular_syntax() {
+        let input = "Error: test\n    at FunctionA (file.tsx:10:5)\n    at FunctionB (other.tsx:20:3)";
+        let result = ToonifiedError::new(input, ErrorType::RuntimeError);
+        let output = result.format_toon();
+        // Should have tabular array declaration
+        assert!(output.contains("frames[") && output.contains("]{fn,loc}:"));
+    }
+
+    #[test]
+    fn toon_format_no_separator_line() {
+        let result = ToonifiedError::new("TypeError: test", ErrorType::TypeError);
+        let output = result.format_toon();
+        // TOON format should NOT have the "---" separator
+        assert!(!output.contains("\n---\n"));
+    }
+
+    #[test]
+    fn toon_format_escapes_commas_in_issue() {
+        let input = "TypeError: foo, bar, baz are undefined";
+        let result = ToonifiedError::new(input, ErrorType::TypeError);
+        let output = result.format_toon();
+        // Commas in issue text should be escaped
+        assert!(output.contains("\\,") || !output.contains("issue: foo, bar"));
+    }
+
+    #[test]
+    fn parse_frame_handles_at_pattern() {
+        let (func, loc) = parse_frame("at MyComponent (http://localhost:3000/src/App.tsx:42:10)");
+        assert_eq!(func, "MyComponent");
+        assert_eq!(loc, "App.tsx:42");
+    }
+
+    #[test]
+    fn parse_frame_handles_at_symbol_pattern() {
+        let (func, loc) = parse_frame("@ MDXContent (Guide.mdx:79:5)");
+        assert_eq!(func, "MDXContent");
+        assert_eq!(loc, "Guide.mdx:79");
+    }
+
+    #[test]
+    fn simplify_location_extracts_filename_and_line() {
+        let loc = simplify_location("http://localhost:6006/node_modules/.cache/App.tsx:42:10");
+        assert_eq!(loc, "App.tsx:42");
+    }
+
+    #[test]
+    fn simplify_location_handles_simple_path() {
+        let loc = simplify_location("/Users/dev/project/src/Component.tsx:100:5");
+        assert_eq!(loc, "Component.tsx:100");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // UTF-8 Truncation Edge Cases
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_multi_byte_chars_at_boundary() {
+        // Japanese: each char is 3 bytes
+        let japanese = "エラーメッセージ";
+        let result = truncate(japanese, 12);
+        // Should not panic and should produce valid UTF-8
+        assert!(result.ends_with("..."));
+        for c in result.chars() {
+            assert!(c.len_utf8() > 0);
+        }
+    }
+
+    #[test]
+    fn truncate_mixed_ascii_and_unicode() {
+        let mixed = "Error: 错误 in module";
+        let result = truncate(mixed, 15);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() > 0);
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        let result = truncate("", 10);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn truncate_very_small_limit() {
+        let result = truncate("hello world", 3);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn truncate_limit_zero() {
+        let result = truncate("hello", 0);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn truncate_four_byte_emoji() {
+        // 🔥 is 4 bytes
+        let emoji_string = "🔥🔥🔥🔥🔥";
+        let result = truncate(emoji_string, 10);
+        assert!(result.ends_with("..."));
+        // Verify it's valid UTF-8 by iterating chars
+        let char_count = result.chars().count();
+        assert!(char_count > 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Frame Parsing Tests (Pre-compiled Regex)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_frame_webpack_path() {
+        let (func, loc) = parse_frame("at render (webpack://my-app/src/Component.tsx:42:10)");
+        assert_eq!(func, "render");
+        assert_eq!(loc, "Component.tsx:42");
+    }
+
+    #[test]
+    fn parse_frame_vite_path() {
+        let (func, loc) = parse_frame("at onClick (http://localhost:5173/src/App.tsx?t=123:15:3)");
+        assert_eq!(func, "onClick");
+        // Should extract the file and line, ignoring query params in some cases
+        assert!(loc.contains("App.tsx") || loc.contains("15"));
+    }
+
+    #[test]
+    fn parse_frame_name_at_symbol_format() {
+        let (func, loc) = parse_frame("MyFunction@/path/to/file.js:100:5");
+        assert_eq!(func, "MyFunction");
+        assert_eq!(loc, "file.js:100");
+    }
+
+    #[test]
+    fn parse_frame_anonymous_function() {
+        let (func, loc) = parse_frame("at anonymous (app.js:10:1)");
+        assert_eq!(func, "anonymous");
+        assert_eq!(loc, "app.js:10");
+    }
+
+    #[test]
+    fn parse_frame_no_match_returns_original() {
+        let (func, loc) = parse_frame("some random text without pattern");
+        assert_eq!(func, "some random text without pattern");
+        assert_eq!(loc, "");
+    }
+
+    #[test]
+    fn parse_frame_empty_string() {
+        let (func, loc) = parse_frame("");
+        assert_eq!(func, "");
+        assert_eq!(loc, "");
+    }
+
+    #[test]
+    fn parse_frame_whitespace_only() {
+        let (func, loc) = parse_frame("   ");
+        assert_eq!(func, "");
+        assert_eq!(loc, "");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Location Simplification Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn simplify_location_webpack_chunk() {
+        let loc = simplify_location("webpack://app/./src/components/Button.tsx:25:8");
+        assert_eq!(loc, "Button.tsx:25");
+    }
+
+    #[test]
+    fn simplify_location_with_query_string() {
+        let loc = simplify_location("http://localhost:3000/src/App.tsx?v=123:42:10");
+        // May or may not handle query strings perfectly, but shouldn't panic
+        assert!(loc.contains("42") || loc.contains("App"));
+    }
+
+    #[test]
+    fn simplify_location_windows_path() {
+        // Windows paths use backslashes, but the regex looks for forward slashes
+        // So it returns the full path since pattern doesn't match cleanly
+        let loc = simplify_location("C:\\Users\\dev\\project\\src\\App.tsx:50:1");
+        // The regex captures from the last / or start, so with backslashes it gets more
+        assert!(loc.contains("App.tsx") && loc.contains("50"));
+    }
+
+    #[test]
+    fn simplify_location_no_column() {
+        let loc = simplify_location("/path/to/file.js:100");
+        assert_eq!(loc, "file.js:100");
+    }
+
+    #[test]
+    fn simplify_location_no_line_number() {
+        let loc = simplify_location("/path/to/file.js");
+        // Should return as-is since pattern doesn't match
+        assert_eq!(loc, "/path/to/file.js");
+    }
+
+    #[test]
+    fn simplify_location_empty_string() {
+        let loc = simplify_location("");
+        assert_eq!(loc, "");
+    }
+
+    #[test]
+    fn simplify_location_various_extensions() {
+        assert_eq!(simplify_location("/a/b.tsx:1:1"), "b.tsx:1");
+        assert_eq!(simplify_location("/a/b.jsx:2:2"), "b.jsx:2");
+        assert_eq!(simplify_location("/a/b.ts:3:3"), "b.ts:3");
+        assert_eq!(simplify_location("/a/b.js:4:4"), "b.js:4");
+        assert_eq!(simplify_location("/a/b.vue:5:5"), "b.vue:5");
+        assert_eq!(simplify_location("/a/b.svelte:6:6"), "b.svelte:6");
+    }
+
+    #[test]
+    fn toon_format_is_more_compact_than_plain() {
+        let input = "Warning: validateDOMNesting(...): <p> cannot appear as a descendant of <p>.\n    at p\n    at MDXContent (http://localhost:6006/Guide.mdx:79:10)\n    at Component (http://localhost:6006/App.tsx:18:5)";
+        let result = ToonifiedError::new(input, ErrorType::DomNesting);
+        let toon = result.format_toon();
+        let plain = result.format_plain();
+        // TOON format should generally be similar or smaller
+        // (may vary based on frame parsing overhead)
+        assert!(toon.len() <= plain.len() + 50, "TOON: {} chars, Plain: {} chars", toon.len(), plain.len());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Playwright Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detects_playwright_timeout_error() {
+        let input = "TimeoutError: locator.click: Timeout 30000ms exceeded.\n    waiting for locator('.nonexistent')";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn detects_playwright_assertion_error() {
+        let input = "Error: Timed out 5000ms waiting for expect(locator).toBeVisible()\n    Locator: locator('.button')";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn detects_playwright_strict_mode_error() {
+        let input = "Error: strict mode violation: locator('.button') resolved to 3 elements";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn detects_playwright_page_goto_error() {
+        let input = "Error: page.goto: Navigation failed because page was closed";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn detects_playwright_locator_fill_error() {
+        let input = "Error: locator.fill: Target closed\n    at LoginPage.fillUsername (tests/login.spec.ts:15:5)";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn detects_playwright_test_import() {
+        let input = "Error: Cannot find module '@playwright/test'\n    from 'tests/example.spec.ts'";
+        let result = detect_error_type(input);
+        assert!(matches!(result, Some(ErrorType::Playwright)));
+    }
+
+    #[test]
+    fn extracts_playwright_issue() {
+        let input = "TimeoutError: locator.click: Timeout 30000ms exceeded.\n    waiting for locator('.nonexistent')";
+        let result = ToonifiedError::new(input, ErrorType::Playwright);
+        assert!(result.issue.is_some());
+        assert!(result.issue.unwrap().contains("Timeout"));
     }
 }

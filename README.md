@@ -1,124 +1,267 @@
-# toonify
+<h1 align="center">toonify</h1>
 
-**Compress verbose browser errors before pasting to LLMs. Save 70-90% tokens.**
+<p align="center">
+  <strong>Compress verbose browser errors for LLMs. Save 70-90% tokens.</strong>
+</p>
 
-A fast, single-binary CLI tool written in Rust with beautiful terminal output.
+<p align="center">
+  <a href="https://github.com/AdroDev/toonify/actions"><img src="https://img.shields.io/github/actions/workflow/status/anthropics/toonify/ci.yml?style=flat-square" alt="Build Status"></a>
+  <a href="https://crates.io/crates/toonify"><img src="https://img.shields.io/crates/v/toonify.svg?style=flat-square" alt="Crates.io"></a>
+  <a href="https://github.com/AdroDev/toonify/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
+</p>
+
+---
+
+## The Problem
+
+When you copy a browser console error and paste it to an LLM, you're wasting tokens on noise:
 
 ```
-╭─────────────────────────────────────────╮
-│ 󰅖 DOM_NESTING                           │
-├─────────────────────────────────────────┤
-│  iOS-SafeArea-Guide.mdx:79             │
-│  <p> cannot be descendant of <p>       │
-│ frames:                                 │
-│   _createMdxContent @ Guide.mdx:79      │
-│   MDXContent @ Guide.mdx:1118           │
-├─────────────────────────────────────────┤
-│ 📦 4521c → 198c (95% saved)             │
-╰─────────────────────────────────────────╯
+Warning: validateDOMNesting(...): <p> cannot appear as a descendant of <p>.
+    at p
+    at MDXContent (http://localhost:6006/node_modules/.cache/sb-vite/deps/chunk-THCTKSJA.js?v=a1b2c3d4:12754:23)
+    at MDXProvider (http://localhost:6006/node_modules/.cache/sb-vite/deps/chunk-THCTKSJA.js?v=a1b2c3d4:12629:3)
+    at DocsContainer (http://localhost:6006/node_modules/.cache/sb-vite/deps/chunk-QIBLKSSA.js?v=a1b2c3d4:24567:3)
+    at ErrorBoundary (http://localhost:6006/node_modules/.cache/sb-vite/deps/chunk-QIBLKSSA.js?v=a1b2c3d4:24123:5)
+    at Docs (http://localhost:6006/node_modules/.cache/sb-vite/deps/chunk-QIBLKSSA.js?v=a1b2c3d4:24892:3)
+    ... [30 more lines of framework internals]
 ```
 
-## Install
+**4,000+ characters** of webpack paths, React internals, and cache hashes — all consumed as tokens before your actual question.
 
-### Cargo (recommended)
+## The Solution
 
 ```bash
-cargo install --git https://github.com/adrozdenko/toonify
+toonify
 ```
 
-### From releases
+```
+╭───────────────────────────────────────╮
+│ 󰅖 DOM_NESTING                         │
+├───────────────────────────────────────┤
+│  Guide.mdx:79                         │
+│  <p> cannot be descendant of <p>      │
+│ frames:                               │
+│   MDXContent @ Guide.mdx:79           │
+│   DocsContainer @ chunk-QIBLKSSA:24   │
+├───────────────────────────────────────┤
+│ 📦 4521c → 198c (95% saved)           │
+╰───────────────────────────────────────╯
+```
 
-Download the binary for your platform from [Releases](https://github.com/adrozdenko/toonify/releases).
+**198 characters.** The LLM gets exactly what it needs: error type, location, message, and relevant stack frames.
 
-### Build locally
+---
+
+## Quick Start
+
+### Install
 
 ```bash
-git clone https://github.com/adrozdenko/toonify
-cd toonify
-cargo build --release
-./target/release/toonify --help
+# Cargo (recommended)
+cargo install toonify
+
+# Or build from source
+git clone https://github.com/AdroDev/toonify
+cd toonify && cargo install --path .
 ```
 
-## Usage
+### Use
 
 ```bash
-# Copy error to clipboard, then:
-toonify           # read clipboard, show colored output
-toonify -c        # also copy result back to clipboard
-toonify -p        # plain output (no colors)
+# 1. Copy an error from your browser console
+# 2. Run toonify
+toonify       # Compresses clipboard, auto-copies result back
 
-# Or pipe:
-pbpaste | toonify       # macOS
-xclip -o | toonify      # Linux
-cat error.txt | toonify
+# 3. Paste to your LLM — done!
 ```
 
-### Workflow
+---
 
-1. Copy error from browser console
-2. Run `toonify -c`
-3. Paste compressed result to your LLM
+## Output Formats
 
-## Supported Errors
+### Colored (default)
 
-| Type | Color | Examples |
-|------|-------|----------|
-| **DOM_NESTING** | Yellow | `<p>` inside `<p>` |
-| **HYDRATION** | Magenta | Server/client mismatch |
-| **TYPE_ERROR** | Red | `undefined is not a function` |
-| **REF_ERROR** | Red | `x is not defined` |
-| **SYNTAX_ERROR** | Red | Unexpected token |
-| **SYSTEM_ERROR** | Red | ENOENT, ECONNREFUSED |
-| **STORYBOOK** | Cyan | SB_* error codes |
-| **RUNTIME_ERROR** | Red | Generic stack traces |
+Beautiful terminal output with error-type colors and icons:
 
-## Why toonify?
-
-LLMs charge per token. A typical browser error is 4000+ characters of noise:
-
-```
-Without toonify:  4000 chars → LLM reads 4000 chars → $$$
-With toonify:      400 chars → LLM reads  400 chars → $
+```bash
+toonify
 ```
 
-The LLM has already consumed tokens by the time it reads your error. Compress **before** you paste.
+### Plain Text
 
-## Features
+For piping or scripts:
 
-- **Smart detection** - Identifies error type automatically
-- **Noise removal** - Strips React/Webpack/Vite internals
-- **Colored output** - Error-type-specific colors and icons
-- **Auto plain mode** - Detects pipes, disables colors
-- **Cross-platform clipboard** - macOS, Linux, Windows
-
-## Options
+```bash
+toonify --plain
+```
 
 ```
--c, --copy     Copy compressed result to clipboard
--p, --plain    Force plain output (no colors)
--h, --help     Show help
--V, --version  Show version
+type: DOM_NESTING
+file: Guide.mdx:79
+issue: <p> cannot appear as a descendant of <p>
+frames:
+  MDXContent @ Guide.mdx:79
+
+---
+compressed: 4521c → 198c (95% saved)
 ```
+
+### TOON Format
+
+[TOON (Token-Oriented Object Notation)](https://github.com/toon-format/toon) — optimized for LLM parsing:
+
+```bash
+toonify --toon
+```
+
+```
+type: DOM_NESTING
+file: Guide.mdx:79
+issue: <p> cannot appear as a descendant of <p>
+frames[1]{fn,loc}:
+  MDXContent,Guide.mdx:79
+stats{orig,comp,pct}: 4521,198,95
+```
+
+TOON uses tabular arrays (`frames[N]{fields}:`) and inline objects (`stats{fields}:`) for maximum token efficiency.
+
+---
+
+## Supported Error Types
+
+toonify automatically detects and categorizes **26 error types**:
+
+| Category | Types | Example |
+|----------|-------|---------|
+| **React/DOM** | `DOM_NESTING`, `HYDRATION`, `INVALID_HOOK`, `REACT_MINIFIED` | `<p>` inside `<p>`, server/client mismatch |
+| **JavaScript** | `TYPE_ERROR`, `REF_ERROR`, `SYNTAX_ERROR`, `RANGE_ERROR` | `undefined is not a function` |
+| **Network** | `CORS_ERROR`, `HTTP_ERROR`, `NETWORK_ERROR`, `WEBSOCKET_ERROR` | CORS blocked, 404/500 responses |
+| **Security** | `CSP_ERROR`, `SECURITY_ERROR`, `MIXED_CONTENT` | Content Security Policy violations |
+| **Build Tools** | `STORYBOOK`, `NEXTJS`, `MODULE_NOT_FOUND` | `SB_*` codes, build failures |
+| **Testing** | `PLAYWRIGHT` | Timeout, locator errors, assertions |
+| **System** | `SYSTEM_ERROR`, `SERVICE_WORKER`, `INDEXEDDB_ERROR` | `ENOENT`, `ECONNREFUSED` |
+
+Each type has optimized extraction rules to capture the most relevant information.
+
+---
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Browser Console Error                        │
+│  4000+ chars of webpack paths, React internals, cache hashes    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         toonify                                  │
+│  1. Detect error type (25 patterns)                              │
+│  2. Extract file location (prefers user code)                    │
+│  3. Extract error message                                        │
+│  4. Filter stack frames (removes framework noise)                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Compressed Output                            │
+│  ~200 chars: type, file, issue, relevant frames                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key optimizations:**
+- **Smart file detection** — Finds your code, not `node_modules`
+- **Framework noise filter** — Removes React, Webpack, Vite internals
+- **Context-aware extraction** — Different logic per error type
+
+---
+
+## CLI Reference
+
+```
+toonify [OPTIONS]
+
+Options:
+      --no-copy  Don't copy result to clipboard (copies by default)
+  -p, --plain    Plain text output (no colors)
+  -t, --toon     TOON format output (token-optimized)
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+### Input Methods
+
+```bash
+# Clipboard (default)
+toonify                      # Reads from clipboard, copies result back
+
+# Pipe
+pbpaste | toonify            # macOS
+xclip -o | toonify           # Linux
+cat error.log | toonify      # File
+
+# Interactive
+toonify                      # If clipboard empty, prompts for paste
+```
+
+### Common Workflows
+
+```bash
+# Quick compress (auto-copies result to clipboard)
+toonify
+
+# Compress to TOON format for Claude/GPT
+toonify -t
+
+# Use in scripts (no auto-copy when piped)
+ERROR=$(pbpaste | toonify -p)
+```
+
+---
 
 ## Why Rust?
 
-| | Benefit |
-|---|---------|
-| **Single binary** | No runtime dependencies |
-| **Fast startup** | ~1ms cold start |
-| **Small size** | ~1.3MB stripped |
+| | |
+|---|---|
+| **Single binary** | No Node.js, Python, or runtime dependencies |
+| **Fast startup** | ~1ms cold start (no JIT warmup) |
+| **Small size** | 1.3MB stripped binary |
 | **Cross-platform** | macOS, Linux, Windows |
-| **Reliable** | No "undefined is not a function" |
+| **Reliable** | Strong typing catches bugs at compile time |
+
+---
 
 ## Contributing
 
 PRs welcome! Ideas:
 
-- [ ] More error patterns (Vue, Angular, Svelte)
+- [ ] More error patterns (Vue, Angular, Svelte, Cypress, Jest)
 - [ ] Homebrew formula
 - [ ] GitHub Actions releases
 - [ ] VS Code extension
 
+### Development
+
+```bash
+# Run tests
+cargo test
+
+# Run with sample input
+echo "TypeError: foo is not a function" | cargo run
+
+# Build release
+cargo build --release
+```
+
+---
+
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  <sub>Built for developers who talk to LLMs</sub>
+</p>
