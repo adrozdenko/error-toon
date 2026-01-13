@@ -19,7 +19,7 @@ const SOURCE_EXTENSIONS: &str = r"mdx|tsx|jsx|ts|js|vue|svelte";
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "toonify", version, about = "Compress verbose browser errors for LLM consumption")]
+#[command(name = "error-toon", version, about = "Compress verbose browser errors for LLM consumption")]
 struct Args {
     /// Don't copy result to clipboard (copies by default)
     #[arg(long)]

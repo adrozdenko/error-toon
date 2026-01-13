@@ -1,13 +1,13 @@
-<h1 align="center">toonify</h1>
+<h1 align="center">error-toon</h1>
 
 <p align="center">
   <strong>Compress verbose browser errors for LLMs. Save 70-90% tokens.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/adrozdenko/toonify/actions"><img src="https://img.shields.io/github/actions/workflow/status/anthropics/toonify/ci.yml?style=flat-square" alt="Build Status"></a>
-  <a href="https://crates.io/crates/toonify"><img src="https://img.shields.io/crates/v/toonify.svg?style=flat-square" alt="Crates.io"></a>
-  <a href="https://github.com/adrozdenko/toonify/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://github.com/adrozdenko/error-toon/actions"><img src="https://img.shields.io/github/actions/workflow/status/anthropics/error-toon/ci.yml?style=flat-square" alt="Build Status"></a>
+  <a href="https://crates.io/crates/error-toon"><img src="https://img.shields.io/crates/v/error-toon.svg?style=flat-square" alt="Crates.io"></a>
+  <a href="https://github.com/adrozdenko/error-toon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
 </p>
 
 ---
@@ -32,7 +32,7 @@ Warning: validateDOMNesting(...): <p> cannot appear as a descendant of <p>.
 ## The Solution
 
 ```bash
-toonify
+error-toon
 ```
 
 ```
@@ -59,19 +59,19 @@ toonify
 
 ```bash
 # Cargo (recommended)
-cargo install toonify
+cargo install error-toon
 
 # Or build from source
-git clone https://github.com/adrozdenko/toonify
-cd toonify && cargo install --path .
+git clone https://github.com/adrozdenko/error-toon
+cd error-toon && cargo install --path .
 ```
 
 ### Use
 
 ```bash
 # 1. Copy an error from your browser console
-# 2. Run toonify
-toonify       # Compresses clipboard, auto-copies result back
+# 2. Run error-toon
+error-toon       # Compresses clipboard, auto-copies result back
 
 # 3. Paste to your LLM — done!
 ```
@@ -85,7 +85,7 @@ toonify       # Compresses clipboard, auto-copies result back
 Beautiful terminal output with error-type colors and icons:
 
 ```bash
-toonify
+error-toon
 ```
 
 ### Plain Text
@@ -93,7 +93,7 @@ toonify
 For piping or scripts:
 
 ```bash
-toonify --plain
+error-toon --plain
 ```
 
 ```
@@ -112,7 +112,7 @@ compressed: 4521c → 198c (95% saved)
 [TOON (Token-Oriented Object Notation)](https://github.com/toon-format/toon) — optimized for LLM parsing:
 
 ```bash
-toonify --toon
+error-toon --toon
 ```
 
 ```
@@ -130,7 +130,7 @@ TOON uses tabular arrays (`frames[N]{fields}:`) and inline objects (`stats{field
 
 ## Supported Error Types
 
-toonify automatically detects and categorizes **26 error types**:
+error-toon automatically detects and categorizes **26 error types**:
 
 | Category | Types | Example |
 |----------|-------|---------|
@@ -156,7 +156,7 @@ Each type has optimized extraction rules to capture the most relevant informatio
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                         toonify                                  │
+│                         error-toon                                  │
 │  1. Detect error type (25 patterns)                              │
 │  2. Extract file location (prefers user code)                    │
 │  3. Extract error message                                        │
@@ -180,7 +180,7 @@ Each type has optimized extraction rules to capture the most relevant informatio
 ## CLI Reference
 
 ```
-toonify [OPTIONS]
+error-toon [OPTIONS]
 
 Options:
       --no-copy  Don't copy result to clipboard (copies by default)
@@ -194,28 +194,28 @@ Options:
 
 ```bash
 # Clipboard (default)
-toonify                      # Reads from clipboard, copies result back
+error-toon                      # Reads from clipboard, copies result back
 
 # Pipe
-pbpaste | toonify            # macOS
-xclip -o | toonify           # Linux
-cat error.log | toonify      # File
+pbpaste | error-toon            # macOS
+xclip -o | error-toon           # Linux
+cat error.log | error-toon      # File
 
 # Interactive
-toonify                      # If clipboard empty, prompts for paste
+error-toon                      # If clipboard empty, prompts for paste
 ```
 
 ### Common Workflows
 
 ```bash
 # Quick compress (auto-copies result to clipboard)
-toonify
+error-toon
 
 # Compress to TOON format for Claude/GPT
-toonify -t
+error-toon -t
 
 # Use in scripts (no auto-copy when piped)
-ERROR=$(pbpaste | toonify -p)
+ERROR=$(pbpaste | error-toon -p)
 ```
 
 ---
