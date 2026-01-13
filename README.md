@@ -5,9 +5,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AdroDev/toonify/actions"><img src="https://img.shields.io/github/actions/workflow/status/anthropics/toonify/ci.yml?style=flat-square" alt="Build Status"></a>
+  <a href="https://github.com/adrozdenko/toonify/actions"><img src="https://img.shields.io/github/actions/workflow/status/anthropics/toonify/ci.yml?style=flat-square" alt="Build Status"></a>
   <a href="https://crates.io/crates/toonify"><img src="https://img.shields.io/crates/v/toonify.svg?style=flat-square" alt="Crates.io"></a>
-  <a href="https://github.com/AdroDev/toonify/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
+  <a href="https://github.com/adrozdenko/toonify/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License"></a>
 </p>
 
 ---
@@ -62,7 +62,7 @@ toonify
 cargo install toonify
 
 # Or build from source
-git clone https://github.com/AdroDev/toonify
+git clone https://github.com/adrozdenko/toonify
 cd toonify && cargo install --path .
 ```
 
